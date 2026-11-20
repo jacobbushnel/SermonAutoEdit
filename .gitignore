@@ -1,0 +1,5 @@
+__pycache__/
+*.words.json
+originals.zip
+failed/
+.DS_Store
