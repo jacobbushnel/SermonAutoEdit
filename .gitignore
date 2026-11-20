@@ -3,3 +3,8 @@ __pycache__/
 originals.zip
 failed/
 .DS_Store
+*.aup3
+*.wav
+*.mp3
+.venv/
+previews/

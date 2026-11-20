@@ -11,8 +11,12 @@ ARCHIVE_ZIP = WATCH_DIR / "originals.zip"
 FAILED_DIR = WATCH_DIR / "failed"
 
 AUDIO_EXTS = {".wav", ".mp3", ".flac", ".m4a", ".aiff", ".aif", ".ogg"}
-OUTPUT_FORMAT = "mp3"          # what the podcast feed gets
-MP3_BITRATE = "128k"
+OUTPUT_FORMAT = "m4a"          # "m4a" (AAC in an MP4 container) or "mp3"
+AUDIO_BITRATE = "96k"          # speech is transparent at 96k mono AAC; 128k+ for stereo
+CHANNELS = 1                   # 1 = mono (right for a single preacher), 2 = stereo
+NORMALIZE = True               # even out loudness to the podcast standard
+TARGET_LUFS = -16.0            # Apple/Spotify podcast target (stereo); mono -16 also fine
+HIGHPASS_HZ = 80               # remove rumble/handling noise below this
 
 POLL_SECONDS = 5               # how often to look for new files
 STABLE_SECONDS = 20            # file size must be unchanged this long
@@ -30,6 +34,15 @@ MATCH_THRESHOLD = 0.75      # 0-1 fuzzy match; lower = more forgiving of sung ly
 START_PAD = 0.3             # seconds added after the song's last word
 END_PAD = 0.3               # seconds trimmed before the end phrase
 MIN_SERMON_SECONDS = 120    # sanity check; shorter than this -> treated as failure
-# Vocabulary hint only (full anchor sentences here can get echoed into the
-# transcript during music/silence and cause false matches).
-WHISPER_PROMPT = "Gospel, Lord Jesus Christ, praise, offering, gifts, Church of Jesus Christ."
+# No prompt: Whisper echoed prompt text into the transcript during the
+# prelude when we gave it one.
+WHISPER_PROMPT = None
+
+# Whisper often drops sung lyrics but does catch the pastor's spoken cue.
+# The song ends at the first word after a silence of at least this long
+# (in the transcript) following the cue.
+START_CUE_PHRASE = "The Gospel of Christ"
+SONG_GAP_SECONDS = 5.0
+SONG_MAX_SECONDS = 90.0     # give up looking for the end of the song after this
+START_CUE_THRESHOLD = 0.9   # stricter than MATCH_THRESHOLD: short phrase, easy to false-match
+REFINE_WINDOW_SECONDS = 45   # how far past the anchor to re-listen for the first spoken word

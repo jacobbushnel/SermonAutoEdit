@@ -20,11 +20,30 @@ def transcribe(audio: Path) -> list[dict]:
     from faster_whisper import WhisperModel  # lazy: only needed here
     model = WhisperModel(config.WHISPER_MODEL, compute_type="int8")
     segments, _ = model.transcribe(str(audio), word_timestamps=True,
-                                       initial_prompt=config.WHISPER_PROMPT)
+                                       initial_prompt=config.WHISPER_PROMPT or None)
     words = [{"word": w.word.strip(), "start": w.start, "end": w.end}
              for seg in segments for w in seg.words]
     cache.write_text(json.dumps(words))
     return words
+
+
+_MODEL = None
+
+
+def first_spoken_word(audio: Path, a: float, b: float) -> float | None:
+    """Re-transcribe just [a, b] seconds with a fresh context and voice-activity
+    filtering (which skips sung/instrumental parts); return the first word's start."""
+    global _MODEL
+    from faster_whisper import WhisperModel
+    _MODEL = _MODEL or WhisperModel(config.WHISPER_MODEL, compute_type="int8")
+    segs, _ = _MODEL.transcribe(str(audio), word_timestamps=True,
+                                clip_timestamps=[a, b],
+                                condition_on_previous_text=False, vad_filter=True)
+    for seg in segs:
+        for w in seg.words:
+            if w.start >= a:
+                return w.start
+    return None
 
 
 def _norm(text: str) -> list[str]:
@@ -66,22 +85,52 @@ def find_phrase(words: list[dict], phrase: str, threshold: float | None = None,
     return hits
 
 
-def bounds_from_words(words: list[dict], duration: float) -> tuple[float, float]:
-    # Anchors are only trusted in order: songs, then sermon, then offering line.
-    all_starts = find_phrase(words, config.START_PHRASE)
-    if not all_starts:
-        raise RuntimeError(f"start phrase not found: {config.START_PHRASE!r}")
-    first_start = all_starts[0][0]
-    # END: first offering line after the first song hit.
-    ends = find_phrase(words, config.END_PHRASE, after=first_start)
+def song_end_after(words: list[dict], t: float) -> float | None:
+    """Start time of the first word that follows a >= SONG_GAP_SECONDS silence
+    after time t (within SONG_MAX_SECONDS)."""
+    prev_end = t
+    for w in words:
+        if w["start"] < t:
+            continue
+        if w["start"] - prev_end >= config.SONG_GAP_SECONDS:
+            return w["start"] - config.START_PAD
+        if w["start"] - t > config.SONG_MAX_SECONDS:
+            return None
+        prev_end = w["end"]
+    return None
+
+
+def bounds_from_words(words: list[dict], duration: float,
+                      refine=None) -> tuple[float, float]:
+    # Song-end candidates, from two kinds of anchor (sung text is unreliable):
+    #  1. the sung "Praise and honor..." itself -> song ends at its last word
+    #  2. the pastor's spoken cue "The Gospel of Christ" -> song ends at the
+    #     first word after a silence in the transcript (Whisper drops singing)
+    cands = [(a, b + config.START_PAD, a) for a, b, _ in find_phrase(words, config.START_PHRASE)]
+    for a, b, _ in find_phrase(words, config.START_CUE_PHRASE, config.START_CUE_THRESHOLD):
+        nxt = song_end_after(words, b)
+        if nxt is not None:
+            cands.append((a, nxt, b))
+    if not cands:
+        raise RuntimeError("no start anchor found (sung response or spoken cue)")
+    cands.sort()
+    first_anchor = cands[0][0]
+    # END: first offering line after the first start anchor.
+    ends = find_phrase(words, config.END_PHRASE, after=first_anchor)
     if not ends:
         raise RuntimeError(f"end phrase not found: {config.END_PHRASE!r}")
     end = ends[0][0] - config.END_PAD            # cut just before it is spoken
-    # START: the last sung "Praise and honor..." before the end phrase
-    # (the response is sung more than once, so take the last).
-    starts = [h for h in all_starts if h[1] < end]
-    start = starts[-1][1] + config.START_PAD     # right after the song's last word
-
+    # START: song ends of the last anchor before the end phrase (the response
+    # may repeat, so take the last).
+    ok = [c for c in cands if c[1] < end]
+    start = ok[-1][1]
+    if refine is not None:
+        # The full-file transcript can attach the song's last words to speech.
+        # Re-listen to a short window after the anchor, with VAD, and use the
+        # first word actually spoken.
+        t = refine(ok[-1][2], min(end, ok[-1][2] + config.REFINE_WINDOW_SECONDS))
+        if t is not None and t < end:
+            start = t - config.START_PAD
     if not (0 <= start < end <= duration + 1) or end - start < config.MIN_SERMON_SECONDS:
         raise RuntimeError(f"implausible bounds {start:.1f}-{end:.1f}s")
     return start, min(end, duration)
@@ -91,7 +140,8 @@ def find_sermon_bounds(audio: Path, duration: float) -> tuple[float, float]:
     """Return (start_seconds, end_seconds) of the sermon.
     Raises on failure so the recording goes to failed/ instead of being
     published with a wrong cut."""
-    return bounds_from_words(transcribe(audio), duration)
+    return bounds_from_words(transcribe(audio), duration,
+                             refine=lambda a, b: first_spoken_word(audio, a, b))
 
 
 def _text(words, a, b):
@@ -105,11 +155,12 @@ if __name__ == "__main__":
     f = Path(sys.argv[1])
     ws = transcribe(f)
     print(f"{len(ws)} words transcribed")
-    for label, ph in (("START", config.START_PHRASE), ("END", config.END_PHRASE)):
-        for a, b, sc in find_phrase(ws, ph):
+    for label, ph in (("START", config.START_PHRASE), ("CUE", config.START_CUE_PHRASE), ("END", config.END_PHRASE)):
+        for a, b, sc in find_phrase(ws, ph, config.START_CUE_THRESHOLD if label == "CUE" else None):
             print(f"{label} hit {a:8.1f}-{b:8.1f}s score {sc:.2f}: {_text(ws, a, b)}")
     try:
-        st, en = bounds_from_words(ws, audio.duration(f))
+        st, en = bounds_from_words(ws, audio.duration(f),
+                                   refine=lambda a, b: first_spoken_word(f, a, b))
         print(f"CHOSEN: {st:.1f}s -> {en:.1f}s  ({(en - st) / 60:.1f} min)")
     except RuntimeError as e:
         print("FAILED:", e)
