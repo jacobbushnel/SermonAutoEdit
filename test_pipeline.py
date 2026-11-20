@@ -13,6 +13,7 @@ cfg = (watch / "config.py").read_text()
 cfg = cfg.replace("Path.home() / \"SermonsReady\"", f"Path({str(out)!r})")
 cfg = cfg.replace("STABLE_SECONDS = 20", "STABLE_SECONDS = 3").replace("POLL_SECONDS = 5", "POLL_SECONDS = 1")
 cfg = cfg.replace('OUTPUT_FORMAT = "m4a"', 'OUTPUT_FORMAT = "wav"')
+cfg = cfg.replace("PUBLISH = True", "PUBLISH = False")
 (watch / "config.py").write_text(cfg)
 (watch / "detect.py").write_text("def find_sermon_bounds(a, d):\n    return 0.0, d\n")  # stub: pipeline test only
 

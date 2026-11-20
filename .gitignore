@@ -8,3 +8,5 @@ failed/
 *.mp3
 .venv/
 previews/
+.env
+published.json

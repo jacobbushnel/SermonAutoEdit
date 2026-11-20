@@ -46,3 +46,11 @@ SONG_GAP_SECONDS = 5.0
 SONG_MAX_SECONDS = 90.0     # give up looking for the end of the song after this
 START_CUE_THRESHOLD = 0.9   # stricter than MATCH_THRESHOLD: short phrase, easy to false-match
 REFINE_WINDOW_SECONDS = 45   # how far past the anchor to re-listen for the first spoken word
+
+# --- Upload to Buzzsprout (publish.py) ---
+PUBLISH = True              # upload each finished sermon automatically
+# False = episode is created as a private draft; review it in Buzzsprout, then
+# publish. Set True once you trust the cuts and want fully hands-off.
+PUBLISH_LIVE = False
+ENCODE_POLL_SECONDS = 20
+ENCODE_TIMEOUT_SECONDS = 1200   # then leave it as a draft

@@ -12,6 +12,7 @@ from pathlib import Path
 import audio
 import config
 import detect
+import publish
 
 log = logging.getLogger("sermon")
 
@@ -61,6 +62,18 @@ def process(p: Path) -> None:
     audio.trim(p, tmp, start, end)
     os.replace(tmp, final)          # atomic: uploader never sees a half file
     log.info("wrote %s", final)
+
+    if config.PUBLISH:
+        try:
+            res = publish.publish(final)
+            log.info("uploaded to Buzzsprout: %s", res)
+        except RuntimeError as e:
+            log.error("UPLOAD FAILED for %s: %s (file is in %s; retry: python3 publish.py)",
+                      final.name, e, config.OUTPUT_DIR)
+        except Exception:
+            # The edit exists and the original gets archived, so nothing is lost.
+            # Retry later with:  python3 publish.py "<file>"
+            log.exception("UPLOAD FAILED for %s (file is in %s)", final.name, config.OUTPUT_DIR)
 
     archive(p)                      # only after the edit exists
     for side in p.parent.glob(p.name + ".words.json"):
